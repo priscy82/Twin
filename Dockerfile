@@ -46,46 +46,30 @@ PORT=${PORT:-10000}
 
 echo "🚀 Container started at $(date)"
 
-# --- Restore from Postgres (safe mode) ---
+# --- Restore from Postgres if DATABASE_URL is set ---
 if [ -n "$DATABASE_URL" ]; then
-  echo "🔄 Trying to restore from Postgres..."
-  set +e
+  echo "🔄 Restoring /home/spaceuser from Postgres..."
   export PGPASSWORD=$(echo $DATABASE_URL | sed -E 's|.*:([^@]*)@.*|\1|')
   PGHOST=$(echo $DATABASE_URL | sed -E 's|.*@([^:/]*):.*|\1|')
   PGUSER=$(echo $DATABASE_URL | sed -E 's|postgres://([^:]*):.*|\1|')
   PGDB=$(echo $DATABASE_URL | sed -E 's|.*/([^?]*)|\1|')
 
   psql -h $PGHOST -U $PGUSER -d $PGDB -c \
-    "CREATE TABLE IF NOT EXISTS termuxfs (id serial primary key, ts timestamptz default now(), data bytea);" 2>/dev/null
+    "CREATE TABLE IF NOT EXISTS termuxfs (id serial primary key, ts timestamptz default now(), data bytea);" >/dev/null 2>&1
 
   psql -h $PGHOST -U $PGUSER -d $PGDB -t -c \
-    "SELECT encode(data,'escape') FROM termuxfs ORDER BY ts DESC LIMIT 1;" 2>/dev/null \
-    | tail -n 1 | base64 -d | tar -xz -C /home/spaceuser 2>/dev/null \
-    || echo "⚠️ No snapshot restored"
-  set -e
-
-  # background autosave
-  (
-    while true; do
-      sleep 300
-      echo "💾 Saving snapshot..."
-      tar -cz -C /home/spaceuser . | base64 | \
-        psql -h $PGHOST -U $PGUSER -d $PGDB -c \
-        "INSERT INTO termuxfs (data) VALUES (decode('$(cat)', 'escape'));" 2>/dev/null \
-        || echo "⚠️ Snapshot failed"
-    done
-  ) &
+    "SELECT encode(data,'escape') FROM termuxfs ORDER BY ts DESC LIMIT 1;" \
+    | tail -n 1 | base64 -d | tar -xz -C /home/spaceuser || echo "⚠️ No snapshot found"
 fi
 
-# --- Start ttyd ---
+# --- Start ttyd in foreground ---
 echo "✅ Launching Termux Twin on port $PORT..."
-which ttyd || { echo "❌ ttyd not found!"; exit 2; }
-
-# Render needs open bind + CORS allowed
 exec ttyd --port $PORT --interface 0.0.0.0 \
   --base-path / \
   --check-origin disable \
   zsh
+EOF
+
 RUN chmod +x /usr/local/bin/start-termux-twin.sh
 
 CMD ["/usr/local/bin/start-termux-twin.sh"]
