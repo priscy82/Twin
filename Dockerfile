@@ -91,4 +91,4 @@ RUN chmod +x /usr/local/bin/start-termux-twin.sh
 
 USER spaceuser
 EXPOSE 10000
-CMD ["/usr/local/bin/start-termux-twin.sh"]
+CMD ["npx", "wetty", "--host", "0.0.0.0", "--port", "10000", "--command", "bash"]
