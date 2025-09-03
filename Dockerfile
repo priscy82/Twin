@@ -1,3 +1,43 @@
+FROM debian:bullseye-slim
+
+ENV DEBIAN_FRONTEND=noninteractive
+ENV LANG=C.UTF-8
+ENV TZ=Etc/UTC
+
+# Install essentials + ttyd build deps
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    ca-certificates curl wget git build-essential \
+    python3 python3-pip python3-venv \
+    nodejs npm \
+    zsh tmux htop vim nano unzip net-tools iputils-ping \
+    openssh-client gnupg locales procps sudo \
+    cmake make gcc g++ postgresql-client pkg-config \
+    libjson-c-dev libwebsockets-dev \
+ && apt-get clean && rm -rf /var/lib/apt/lists/*
+
+# Build ttyd from source
+RUN git clone --depth=1 https://github.com/tsl0922/ttyd.git /tmp/ttyd \
+ && cd /tmp/ttyd && mkdir build && cd build \
+ && cmake .. && make && make install \
+ && cd / && rm -rf /tmp/ttyd
+
+# Create Termux-like user
+RUN useradd -m -s /bin/zsh spaceuser \
+ && echo "spaceuser ALL=(ALL) NOPASSWD:ALL" > /etc/sudoers.d/spaceuser \
+ && chmod 0440 /etc/sudoers.d/spaceuser
+
+USER spaceuser
+WORKDIR /home/spaceuser
+
+# Configure Zsh
+RUN { echo 'export TERM=xterm-256color'; \
+      echo 'PS1="%F{cyan}termux@%m:%~%f\n$ "'; \
+      echo 'alias ll="ls -alF"'; \
+      echo 'alias pkg="sudo apt-get"'; } >> ~/.zshrc
+
+USER root
+EXPOSE 10000
+
 # Startup script
 RUN cat <<'EOF' > /usr/local/bin/start-termux-twin.sh
 #!/bin/bash
@@ -41,3 +81,5 @@ exec ttyd -p $PORT zsh
 EOF
 
 RUN chmod +x /usr/local/bin/start-termux-twin.sh
+
+CMD ["/usr/local/bin/start-termux-twin.sh"]
