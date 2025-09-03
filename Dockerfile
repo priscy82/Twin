@@ -80,9 +80,12 @@ fi
 # --- Start ttyd ---
 echo "✅ Launching Termux Twin on port $PORT..."
 which ttyd || { echo "❌ ttyd not found!"; exit 2; }
-exec ttyd -p $PORT zsh
-EOF
 
+# Render needs open bind + CORS allowed
+exec ttyd --port $PORT --interface 0.0.0.0 \
+  --base-path / \
+  --check-origin disable \
+  zsh
 RUN chmod +x /usr/local/bin/start-termux-twin.sh
 
 CMD ["/usr/local/bin/start-termux-twin.sh"]
