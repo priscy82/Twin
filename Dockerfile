@@ -1,25 +1,22 @@
-FROM debian:bullseye-slim
+# Termux-like Web Terminal on Render with Wetty + Postgres snapshots
+# Base with Node >= 18 so Wetty works
+FROM node:20-bullseye-slim
 
 ENV DEBIAN_FRONTEND=noninteractive
 ENV LANG=C.UTF-8
 ENV TZ=Etc/UTC
 
-# Install essentials + ttyd build deps
+# Essentials + Postgres client (no X11, keep it slim)
 RUN apt-get update && apt-get install -y --no-install-recommends \
     ca-certificates curl wget git build-essential \
     python3 python3-pip python3-venv \
-    nodejs npm \
     zsh tmux htop vim nano unzip net-tools iputils-ping \
     openssh-client gnupg locales procps sudo \
-    cmake make gcc g++ postgresql-client pkg-config \
-    libjson-c-dev libwebsockets-dev \
+    postgresql-client \
  && apt-get clean && rm -rf /var/lib/apt/lists/*
 
-# Build ttyd from source
-RUN git clone --depth=1 https://github.com/tsl0922/ttyd.git /tmp/ttyd \
- && cd /tmp/ttyd && mkdir build && cd build \
- && cmake .. && make && make install \
- && cd / && rm -rf /tmp/ttyd
+# Install Wetty (browser terminal)
+RUN npm i -g wetty
 
 # Create Termux-like user
 RUN useradd -m -s /bin/zsh spaceuser \
@@ -29,47 +26,101 @@ RUN useradd -m -s /bin/zsh spaceuser \
 USER spaceuser
 WORKDIR /home/spaceuser
 
-# Configure Zsh
+# Minimal Zsh config (Termux feel)
 RUN { echo 'export TERM=xterm-256color'; \
       echo 'PS1="%F{cyan}termux@%m:%~%f\n$ "'; \
       echo 'alias ll="ls -alF"'; \
-      echo 'alias pkg="sudo apt-get"'; } >> ~/.zshrc
+      echo 'alias pkg="sudo apt-get"'; \
+      echo 'alias tx="/usr/local/bin/tx"'; \
+    } >> ~/.zshrc
 
+# Snapshot helper (tx): save/restore/history using Postgres Large Objects
 USER root
-EXPOSE 10000
+RUN cat <<'TX' >/usr/local/bin/tx
+#!/usr/bin/env bash
+set -euo pipefail
 
-# Startup script
-RUN cat <<'EOF' > /usr/local/bin/start-termux-twin.sh
-#!/bin/bash
-set -e
-PORT=${PORT:-10000}
+need_db() {
+  if [ -z "${DATABASE_URL:-}" ]; then
+    echo "❌ DATABASE_URL is not set." >&2
+    exit 1
+  fi
+}
 
-echo "🚀 Container started at $(date)"
+case "${1:-}" in
+  save)
+    need_db
+    tmp=/tmp/termuxfs.tar.gz
+    tar -czf "$tmp" -C /home/spaceuser .
+    # Import file as Large Object and record its OID atomically
+    psql "$DATABASE_URL" <<'SQL'
+\set ON_ERROR_STOP on
+CREATE TABLE IF NOT EXISTS termuxfs_lo (
+  id serial PRIMARY KEY,
+  ts timestamptz DEFAULT now(),
+  lo_oid oid NOT NULL
+);
+\lo_import /tmp/termuxfs.tar.gz
+INSERT INTO termuxfs_lo(lo_oid) VALUES (:LASTOID);
+SQL
+    echo "✅ Snapshot saved."
+    ;;
+  restore)
+    need_db
+    OID="$(psql "$DATABASE_URL" -t -A -c "SELECT lo_oid FROM termuxfs_lo ORDER BY ts DESC LIMIT 1")"
+    if [ -z "$OID" ]; then
+      echo "⚠️  No snapshots found."
+      exit 0
+    fi
+    psql "$DATABASE_URL" -c "\lo_export $OID /tmp/termuxfs.tar.gz"
+    tar -xzf /tmp/termuxfs.tar.gz -C /home/spaceuser
+    chown -R spaceuser:spaceuser /home/spaceuser
+    echo "✅ Snapshot restored (OID $OID)."
+    ;;
+  history)
+    need_db
+    psql "$DATABASE_URL" -c "SELECT id, ts, lo_oid FROM termuxfs_lo ORDER BY ts DESC LIMIT 20;"
+    ;;
+  *)
+    echo "tx usage:"
+    echo "  tx save      # snapshot /home/spaceuser to Postgres"
+    echo "  tx restore   # restore latest snapshot"
+    echo "  tx history   # list recent snapshots"
+    exit 1
+    ;;
+esac
+TX
+RUN chmod +x /usr/local/bin/tx && chown spaceuser:spaceuser /usr/local/bin/tx
 
-# --- Restore from Postgres if DATABASE_URL is set ---
-if [ -n "$DATABASE_URL" ]; then
-  echo "🔄 Restoring /home/spaceuser from Postgres..."
-  export PGPASSWORD=$(echo $DATABASE_URL | sed -E 's|.*:([^@]*)@.*|\1|')
-  PGHOST=$(echo $DATABASE_URL | sed -E 's|.*@([^:/]*):.*|\1|')
-  PGUSER=$(echo $DATABASE_URL | sed -E 's|postgres://([^:]*):.*|\1|')
-  PGDB=$(echo $DATABASE_URL | sed -E 's|.*/([^?]*)|\1|')
-
-  psql -h $PGHOST -U $PGUSER -d $PGDB -c \
-    "CREATE TABLE IF NOT EXISTS termuxfs (id serial primary key, ts timestamptz default now(), data bytea);" >/dev/null 2>&1
-
-  psql -h $PGHOST -U $PGUSER -d $PGDB -t -c \
-    "SELECT encode(data,'escape') FROM termuxfs ORDER BY ts DESC LIMIT 1;" \
-    | tail -n 1 | base64 -d | tar -xz -C /home/spaceuser || echo "⚠️ No snapshot found"
+# Start script: restore, autosave, then run Wetty in foreground
+RUN cat <<'START' >/usr/local/bin/start-termux-twin.sh
+#!/usr/bin/env bash
+set -euo pipefail
+PORT="${PORT:-10000}"
+echo "🚀 Container start: $(date)"
+if [ -n "${DATABASE_URL:-}" ]; then
+  echo "🔄 Restoring home from Postgres..."
+  sudo -u spaceuser /usr/local/bin/tx restore || true
+else
+  echo "ℹ️ DATABASE_URL not set; starting without persistence."
 fi
 
-# --- Start ttyd in foreground ---
-echo "✅ Launching Termux Twin on port $PORT..."
-exec ttyd --port $PORT --interface 0.0.0.0 \
-  --base-path / \
-  --check-origin disable \
-  zsh
-EOF
+# Background autosave every 5 minutes
+if [ -n "${DATABASE_URL:-}" ]; then
+  ( while true; do
+      sleep 300
+      echo "💾 Autosaving snapshot at $(date)..."
+      sudo -u spaceuser /usr/local/bin/tx save || echo "⚠️ Autosave failed"
+    done ) &
+fi
 
+echo "✅ Launching Wetty on 0.0.0.0:${PORT}"
+# Run Wetty in foreground (keeps the container alive)
+exec sudo -u spaceuser wetty --host 0.0.0.0 --port "$PORT" --base / --allow-iframe --command /bin/zsh
+START
 RUN chmod +x /usr/local/bin/start-termux-twin.sh
 
+# Run as the normal user
+USER spaceuser
+EXPOSE 10000
 CMD ["/usr/local/bin/start-termux-twin.sh"]
