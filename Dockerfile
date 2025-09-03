@@ -62,25 +62,19 @@ if [ -n "$DATABASE_URL" ]; then
     | tail -n 1 | base64 -d | tar -xz -C /home/spaceuser || echo "⚠️ No snapshot found"
 fi
 
-# --- Start ttyd ---
-echo "✅ Launching Termux Twin on port $PORT..."
-ttyd -p $PORT zsh &
-PID=$!
-
-# --- Auto-save snapshot every 5 mins ---
+# --- Auto-save snapshot in background ---
 if [ -n "$DATABASE_URL" ]; then
-  while true; do
-    sleep 300
-    echo "💾 Saving snapshot to Postgres..."
-    tar -cz -C /home/spaceuser . | base64 | \
-      psql -h $PGHOST -U $PGUSER -d $PGDB -c \
-      "INSERT INTO termuxfs (data) VALUES (decode('$(cat)', 'escape'));" || echo "⚠️ Snapshot failed"
-  done &
+  (
+    while true; do
+      sleep 300
+      echo "💾 Saving snapshot to Postgres..."
+      tar -cz -C /home/spaceuser . | base64 | \
+        psql -h $PGHOST -U $PGUSER -d $PGDB -c \
+        "INSERT INTO termuxfs (data) VALUES (decode('$(cat)', 'escape'));" || echo "⚠️ Snapshot failed"
+    done
+  ) &
 fi
 
-wait $PID
-EOF
-
-RUN chmod +x /usr/local/bin/start-termux-twin.sh
-
-CMD ["/usr/local/bin/start-termux-twin.sh"]
+# --- Start ttyd in foreground ---
+echo "✅ Launching Termux Twin on port $PORT..."
+exec ttyd -p $PORT zsh
