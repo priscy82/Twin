@@ -4,17 +4,18 @@ ENV DEBIAN_FRONTEND=noninteractive
 ENV LANG=C.UTF-8
 ENV TZ=Etc/UTC
 
-# Install essentials
+# Install essentials + ttyd build deps
 RUN apt-get update && apt-get install -y --no-install-recommends \
     ca-certificates curl wget git build-essential \
     python3 python3-pip python3-venv \
     nodejs npm \
     zsh tmux htop vim nano unzip net-tools iputils-ping \
     openssh-client gnupg locales procps sudo \
-    cmake make gcc g++ postgresql-client \
+    cmake make gcc g++ postgresql-client pkg-config \
+    libjson-c-dev libwebsockets-dev \
  && apt-get clean && rm -rf /var/lib/apt/lists/*
 
-# Build ttyd from source (since not in Bullseye repo)
+# Build ttyd from source
 RUN git clone --depth=1 https://github.com/tsl0922/ttyd.git /tmp/ttyd \
  && cd /tmp/ttyd && mkdir build && cd build \
  && cmake .. && make && make install \
