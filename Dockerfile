@@ -16,10 +16,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
  && npm install -g wetty \
  && apt-get clean && rm -rf /var/lib/apt/lists/*
 
-# Create Termux-like user
-RUN useradd -m -s /bin/zsh spaceuser \
- && echo "spaceuser ALL=(ALL) NOPASSWD:ALL" > /etc/sudoers.d/spaceuser \
- && chmod 0440 /etc/sudoers.d/spaceuser
+# Create Termux-like user (no sudo)
+RUN useradd -m -s /bin/zsh spaceuser
 
 USER spaceuser
 WORKDIR /home/spaceuser
@@ -32,7 +30,7 @@ RUN { echo 'export TERM=xterm-256color'; \
 
 USER root
 
-# --- Snapshot helper (tx) ---
+# Snapshot helper (tx)
 RUN cat <<'EOF' > /usr/local/bin/tx
 #!/bin/bash
 set -e
@@ -70,7 +68,7 @@ EOF
 
 RUN chmod +x /usr/local/bin/tx
 
-# --- Startup script ---
+# Startup script
 RUN cat <<'EOF' > /usr/local/bin/start-termux-twin.sh
 #!/bin/bash
 set -e
@@ -78,13 +76,13 @@ PORT=${PORT:-10000}
 
 echo "🚀 Container started at $(date)"
 
-# --- Restore snapshot ---
+# Restore snapshot if available
 if [ -n "${DATABASE_URL:-}" ]; then
   echo "🔄 Restoring home from Postgres..."
   /usr/local/bin/tx restore || true
 fi
 
-# --- Launch Wetty in foreground ---
+# Launch Wetty in foreground
 echo "✅ Launching Wetty on 0.0.0.0:$PORT"
 exec wetty --host 0.0.0.0 --port "$PORT" --base / --allow-iframe --command /bin/zsh
 EOF
