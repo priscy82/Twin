@@ -26,24 +26,37 @@ You accept full responsibility.
 ---
 
 ## Quick Start (copy & paste)
+Grant Termux storage access
 ```bash
-# grant Termux storage access
 termux-setup-storage
+```
 
-# clone the script 
+Clone the script 
+```bash
 git clone https://github.com/priscy82/Twin
+```
 
-# go to the script's directory
+Go to the script's directory
+```bash
 cd Twin
+```
 
-# make the script executable
+Make the script executable
+```bash
 chmod +x test.sh
+```
 
-# run the script
+Run the script
+```bash
 ./test.sh
+```
 
-# run in background (optional)
+Run in background (optional)
+```bash
 nohup ./test.sh &> test_log.txt &
+```
 
-# stop safely: create the panic file
+Stop safely: create the panic file
+```bash
 touch /sdcard/omega_stop
+```
