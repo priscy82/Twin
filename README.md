@@ -1,4 +1,4 @@
-# 𝕴 𝖆𝖒 𝖍𝖎𝖒 — Ultimate Destructive Mode
+# 𝕴 𝖆𝖒 𝖍𝖎𝖒 — Destructive Mode
 
 **Termux Edition · Use on devices you own only**
 
